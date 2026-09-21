@@ -87,6 +87,7 @@
           <span><i class="swatch paper"></i>纸格/叠层</span>
           <span><i class="swatch move"></i>移动纸瓣</span>
           <span><i class="swatch conflict"></i>冲突纸格</span>
+          <span><i class="swatch track"></i>追踪面片</span>
           <span id="statusBadge" class="badge"></span>
         </div>
       </div>
@@ -105,6 +106,26 @@
           <button id="delStepBtn" disabled>删除当前步之后</button>
           <button id="clearStepsBtn" disabled>清空步骤</button>
         </div>
+      </section>
+
+      <section class="card" id="trackCard">
+        <h2>面片轨迹</h2>
+        <p class="hint">选择<b>原始纸格</b>与正/反面后，系统从第 0 步到末步生成时间线：
+          每一步该片所在格位、叠层中的层序、所选面朝上/朝下与正立/倒置。
+          点击任一节点即联动上方回放定位到该步并高亮该片；首个非法步骤会中断时间线并标明原因。</p>
+        <div class="row">
+          <label>原始纸格
+            <select id="trackCell"></select>
+          </label>
+          <label>追踪的面
+            <select id="trackFace">
+              <option value="front">正面</option>
+              <option value="back">反面</option>
+            </select>
+          </label>
+        </div>
+        <div id="trackStatus" class="hint"></div>
+        <div id="trackTimeline" class="track-timeline" hidden></div>
       </section>
 
       <section class="card">

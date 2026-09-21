@@ -138,6 +138,7 @@ button.fold { flex: 1 1 40%; min-width: 110px; font-weight: 600; }
 .swatch.paper { background: var(--paper); border-color: var(--paper-edge); }
 .swatch.move { background: var(--moving); border-color: var(--moving-edge); }
 .swatch.conflict { background: var(--conflict); border-color: var(--conflict-edge); }
+.swatch.track { background: #fff1de; border-color: #e8820c; }
 .badge { margin-left: auto; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
 .badge.ok { background: #e3f6ec; color: var(--ok); }
 .badge.err { background: var(--warn-bg); color: var(--danger); }
@@ -240,6 +241,80 @@ button.fold { flex: 1 1 40%; min-width: 110px; font-weight: 600; }
 .path-sol-head button { margin-left: auto; padding: 4px 10px; font-size: 12px; }
 .path-step-list { margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.7; color: var(--ink); }
 .path-step-list li { font-variant-numeric: tabular-nums; }
+
+/* ---------- 面片轨迹 ---------- */
+.track-status-err { color: var(--danger); }
+.track-status-ok { color: var(--ok); }
+.track-timeline {
+  margin-top: 10px;
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.track-node {
+  flex: 0 0 auto;
+  width: 116px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1.5px solid var(--line);
+  background: #f8faff;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  line-height: 1.45;
+  cursor: pointer;
+}
+.track-node:hover { border-color: #e8820c; }
+.track-node .track-step {
+  font-weight: 700;
+  color: #102a5c;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.track-node .track-cell { color: var(--ink); font-variant-numeric: tabular-nums; }
+.track-node .track-meta, .track-node .track-label { color: var(--muted); }
+.track-node .track-meta b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.track-node .track-up { color: var(--primary); font-weight: 600; }
+.track-node .track-down { color: #7b4ed0; font-weight: 600; }
+.track-node .track-inv { color: var(--danger); font-weight: 700; }
+.track-node .track-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--ink);
+}
+.track-node.current {
+  border-color: #e8820c;
+  background: #fff1de;
+  box-shadow: 0 0 0 2px rgba(232, 130, 12, .18);
+}
+.track-node.current .track-step { color: #b35f06; }
+.track-node.future { opacity: .55; }
+.track-node.stalled {
+  border-style: dashed;
+  border-color: #e8820c;
+}
+.track-node.break {
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+  border-style: dashed;
+}
+.track-node.break .track-stop { color: var(--danger); font-weight: 700; }
+.track-node.break .track-reason { color: #8a1c1c; font-size: 10px; line-height: 1.4; }
+.track-arrow {
+  align-self: center;
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 12px;
+}
 
 /* ---------- 双面印刷版预览 ---------- */
 .duplex-status-err { color: var(--danger); }

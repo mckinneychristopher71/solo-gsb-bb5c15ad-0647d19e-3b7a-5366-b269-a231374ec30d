@@ -778,6 +778,88 @@ function findFoldPath(rows, cols, labels, steps, target, options) {
   };
 }
 
+/**
+ * 面片轨迹
+ * --------
+ * 选定一个<b>原始纸格</b>（以其初始 id "ox,oy" 为身份）及其正/反面后，
+ * 从第 0 步（未折叠）逐步重放，给出该面片在每一步后的：
+ *   - 当前所在格位 cell；
+ *   - 叠层中的层序 layer（1 = 最上层）与该叠总层数 depth；
+ *   - 所选面朝上还是朝下 faceUp；
+ *   - 页码正立还是倒置 180° upright。
+ *
+ * 身份追踪始终使用初始面板 id（applyFold 只移动/重排 id，不新建面片），
+ * 因此叠层合并、瓣内倒序后轨迹依然准确。
+ *
+ * 遇到首个非法步骤时停止：已生成的此前节点全部保留，并在 interrupted 中
+ * 标明中断步号、原因码与冲突纸格；steps 中该步及之后均无对应节点。
+ *
+ * @param target { cell:'x,y'(原始纸格), face:'front'|'back' }
+ * @returns 成功（或在中途非法步被截断）
+ *   { ok:true, target:{cell,face}, rows, cols,
+ *     points:[{ step, cell:'x,y', layer, depth, faceUp, upright,
+ *               face:'front'|'back', label:string|null }],
+ *     interrupted:null | { stepIndex, code, message, conflicts },
+ *     completed:boolean }   // true = 全部步骤均合法
+ *   前置错误 { ok:false, code:'bad_grid'|'bad_target', message }
+ */
+function trackPanel(rows, cols, labels, steps, target) {
+  rows = Number(rows); cols = Number(cols);
+  if (!Number.isInteger(rows) || rows < 1 || !Number.isInteger(cols) || cols < 1) {
+    return { ok: false, code: 'bad_grid', message: '尚未创建合法的行列纸格（行数、列数都须为正整数）。' };
+  }
+  const list = Array.isArray(steps) ? steps : [];
+  target = target || {};
+  const m = /^(\d+),(\d+)$/.exec(String(target.cell));
+  if (!m) return { ok: false, code: 'bad_target', message: '请选择一个原始纸格作为追踪目标。' };
+  const tx = Number(m[1]), ty = Number(m[2]);
+  if (tx < 0 || tx >= cols || ty < 0 || ty >= rows) {
+    return { ok: false, code: 'bad_target', message: `目标原格 (${target.cell}) 不在 ${cols}×${rows} 网格内。` };
+  }
+  if (target.face !== 'front' && target.face !== 'back') {
+    return { ok: false, code: 'bad_target', message: "追踪面须为 'front'（正面）或 'back'（反面）。" };
+  }
+  const panelId = key(tx, ty);
+
+  const makePoint = (state, step) => {
+    const p = state.panels[panelId];
+    const ids = state.stacks[p.cx + ',' + p.cy];
+    const layer = ids.indexOf(panelId) + 1;   // 1 = 叠顶；id 始终在自己所在格位的叠内
+    const label = p[target.face] === '' ? null : p[target.face];
+    return {
+      step,
+      cell: p.cx + ',' + p.cy,
+      layer,
+      depth: ids.length,
+      face: target.face,
+      faceUp: target.face === 'front' ? p.frame.n.z > 0 : p.frame.n.z < 0,
+      upright: p.frame.y.y > 0,
+      label
+    };
+  };
+
+  let state = initialState(rows, cols, labels);
+  const points = [makePoint(state, 0)];
+  let interrupted = null;
+  for (let i = 0; i < list.length; i++) {
+    const err = validateFold(state, list[i]);
+    if (err) {
+      interrupted = { stepIndex: i, code: err.code, message: err.message, conflicts: err.conflicts };
+      break;
+    }
+    state = applyFold(state, list[i]);
+    points.push(makePoint(state, i + 1));
+  }
+  return {
+    ok: true,
+    target: { cell: panelId, face: target.face },
+    rows, cols,
+    points,
+    interrupted,
+    completed: !interrupted
+  };
+}
+
 /** 方案校验/规整（载入 JSON 时使用） */
 function normalizePlan(plan) {
   const errors = [];
@@ -828,7 +910,8 @@ const api = {
   replay, visibleFace, pageSequence, normalizePlan, key,
   impositionEligibility, autoImpose, impositionOverwrite,
   duplexEligibility, buildDuplexPlates,
-  findFoldPath, candidateSteps, stateKey, describeStep
+  findFoldPath, candidateSteps, stateKey, describeStep,
+  trackPanel
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = api;

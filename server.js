@@ -151,6 +151,23 @@ app.post('/api/find-path', (req, res) => {
   }
 });
 
+// ---------- 面片轨迹 ----------
+app.post('/api/trajectory', (req, res) => {
+  try {
+    const plan = E.normalizePlan(req.body || {});
+    const result = E.trackPanel(
+      plan.rows, plan.cols, plan.labels, plan.steps,
+      req.body && req.body.target
+    );
+    if (!result.ok) {
+      return res.json({ ok: false, error: { code: result.code, message: result.message } });
+    }
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ ok: false, error: { code: 'bad_plan', message: e.message } });
+  }
+});
+
 // ---------- 方案持久化 ----------
 function planFile(id) { return path.join(DATA_DIR, `${id}.json`); }
 

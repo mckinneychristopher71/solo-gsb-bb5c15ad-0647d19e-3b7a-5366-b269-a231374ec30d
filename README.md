@@ -50,10 +50,22 @@ docker compose down
      在画布上用红底标出冲突纸格。
 4. **逐步回放**：用顶部的 ⏮ / ◀ / ▶播放 / ▶| 按钮或进度条，查看任一步后的
    面片位置、叠层厚度（`×N`）、朝上的是正面还是反面、以及页码是否倒置（`⟲倒`）。
-5. **阅读顺序**：右侧“最终阅读顺序”按骑马钉式折帖叶序输出
+5. **面片轨迹**：右侧“面片轨迹”卡片中选择某个**原始纸格**及其**正/反面**：
+   - 系统从**第 0 步到末步**生成时间线，每个节点列出该面片当前**所在格位**、
+     在叠层中的**层序**（`层 2/4` = 4 层叠中自上而下第 2 层）、所选面
+     **朝上/朝下**与**正立/倒置**，以及该面页码；
+   - 轨迹始终以**原始面片身份**跨折叠追踪（叠层合并、瓣内倒序后仍准确），
+     **点击任一节点**即联动顶部回放定位到该步，并在画布中用橙色描边与
+     `轨 层/总层` 徽标高亮该片（夹在叠层中间时高亮随层序偏移显示）；
+   - 遇到**首个非法步骤**时时间线在该处中断：此前节点全部保留，
+     末尾红色“中断”节点标明原因（外轮廓 / 厚度不一致）与冲突纸格，
+     点击中断节点定位到中断前最后一步；
+   - 网格、标注或步骤变化后时间线**自动重算**；追踪选择不写入方案，
+     保存与导入格式不变。
+6. **阅读顺序**：右侧“最终阅读顺序”按骑马钉式折帖叶序输出
    封面 → … → 封底的页码序列；倒置页码以红底标出，空白页显示“空白”。
    尚未收成单叠时，会分组列出每个分离叠层的序列。
-6. **自动拼版**：仅当**全部折叠步骤都可合法回放且已收成单叠**时，
+7. **自动拼版**：仅当**全部折叠步骤都可合法回放且已收成单叠**时，
    右侧“自动拼版”卡片才允许输入**起始页码**与**成品页数**：
    - 系统按最终封面→封底的阅读槽位依次写入连续页码，再反向映射到
      每个原始纸格的正/反面；
@@ -62,7 +74,7 @@ docker compose down
    - “生成预览”**不会改动当前标注**；确认后才批量写入；若现有标注非空，
      确认前会汇总所有将被覆盖/清空的位置（写入前还会二次确认）；
    - 非法折叠、未收成单叠或页数超出容量时，生成按钮禁用并给出具体原因。
-7. **折手自动寻路**：右侧“折手自动寻路”卡片中，指定某个**原始纸格**的
+8. **折手自动寻路**：右侧“折手自动寻路”卡片中，指定某个**原始纸格**的
    **正面或反面**作为最终朝上的封面，点击“搜索最短折法”：
    - 搜索从**当前方案全部步骤合法回放后的末态**出发（与回放停在第几步无关），
      枚举引擎当前允许的折线与方向，按 BFS 求“收成单叠且封面符合指定”的
@@ -77,7 +89,7 @@ docker compose down
      达到时间上限仍未确认时提示“**搜索超限**”；
    - 当前方案含非法折叠、或网格超过 4×4 时，搜索按钮禁用并给出原因；
      搜索本身不改动当前步骤，只有手动“追加”才会写入。
-8. **双面印刷版预览**：右侧“双面印刷版预览”卡片中选择翻面方式，点击“生成双面版预览”：
+9. **双面印刷版预览**：右侧“双面印刷版预览”卡片中选择翻面方式，点击“生成双面版预览”：
    - **长边翻转**（沿纸张竖边左右翻面，常规骑马钉/侧边装订）或
      **短边翻转**（沿纸张横边上下翻面，tumble/台历式翻页）；
    - 系统并排生成**正面版（第 1 印刷面）与背面版（第 2 印刷面）**：
@@ -99,7 +111,7 @@ docker compose down
        纸张 A4（或与纸格比例相近的横向纸）；
      - 应用已内置打印样式：**自动隐藏全部编辑控件，正面版、背面版各占一页**
        （A4 横版），无需在打印对话框中再做隐藏设置。
-9. **保存 / 载入**：
+10. **保存 / 载入**：
    - “保存到服务器”将方案 JSON 存入容器数据卷，可通过“已存方案…”再次载入；
    - “导出 JSON / 导入 JSON”在本地文件与应用之间交换方案。
 
@@ -142,18 +154,19 @@ docker compose down
 ## 目录结构
 
 ```
-server.js              Express 服务：静态托管 + /api/simulate + /api/impose + /api/duplex-plate + /api/find-path + 方案持久化
+server.js              Express 服务：静态托管 + /api/simulate + /api/impose + /api/duplex-plate + /api/find-path + /api/trajectory + 方案持久化
 entrypoint.sh          容器启动入口（依赖自检/安装、初始化、启动）
 public/
   index.html           页面结构
-  styles.css           样式（含双面版打印样式 @media print）
-  foldEngine.js        折叠模拟引擎（浏览器与服务端共用）
-  app.js               Canvas 渲染、交互、回放、存取、双面印刷版预览
+  styles.css           样式（含面片轨迹时间线与双面版打印样式 @media print）
+  foldEngine.js        折叠模拟引擎（浏览器与服务端共用，含面片轨迹 trackPanel）
+  app.js               Canvas 渲染、交互、回放、面片轨迹、存取、双面印刷版预览
 tests/engine.test.js   引擎单元测试（node --test）
 tests/imposition.test.js 自动拼版单元测试
 tests/duplex.test.js   双面印刷版（镜像、制版旋转、前置条件）单元测试
 tests/pathfind.test.js 折手自动寻路（BFS、状态键、无解/超限）单元测试
-tests/api.test.js      /api/impose、/api/find-path、/api/simulate 与方案存取的 HTTP 测试
+tests/trajectory.test.js 面片轨迹（身份追踪、层序/朝向、非法步中断、参数校验）单元测试
+tests/api.test.js      /api/impose、/api/find-path、/api/trajectory、/api/simulate 与方案存取的 HTTP 测试
 tests/ui-smoke.js      前端主流程冒烟（DOM 桩中加载 app.js，直接 `node tests/ui-smoke.js` 运行）
 Dockerfile, docker-compose.yml
 ```
@@ -161,7 +174,7 @@ Dockerfile, docker-compose.yml
 ## 运行测试
 
 ```bash
-npm test                 # node --test：引擎 / 拼版 / 寻路 / HTTP 测试
+npm test                 # node --test：引擎 / 拼版 / 寻路 / 轨迹 / HTTP 测试
 node tests/ui-smoke.js   # 前端主流程冒烟（DOM 桩，独立运行）
 ```
 
@@ -201,3 +214,21 @@ node tests/ui-smoke.js   # 前端主流程冒烟（DOM 桩，独立运行）
 网格超过 4×4、前缀含非法折叠等前置问题返回 `ok:false`，错误码
 `grid_too_large` / `bad_prefix` / `bad_target` / `bad_limit` / `bad_grid`。
 返回的 `steps` 可直接追加到方案 `steps` 后交由 `/api/simulate` 回放验证。
+
+`POST /api/trajectory` 在方案 JSON 之外附加：
+
+```json
+{
+  "target": { "cell": "1,0", "face": "back" }
+}
+```
+
+以原始纸格 `cell`（`列,行`）的面片身份从第 0 步逐步追踪其指定面
+（`front` / `back`），命中时返回 `ok:true` 与时间线 `points`：
+每点含 `step`、`cell`（当前所在格位）、`layer` / `depth`（叠内自上而下层序，
+1 = 最上层）、`face`、`faceUp`（所选面朝上/朝下）、`upright`（正立/倒置）
+与 `label`（空白为 `null`）。全部步骤合法时 `completed:true`、`interrupted:null`；
+遇到首个非法步骤时保留此前全部节点，`completed:false` 且
+`interrupted:{stepIndex,code,message,conflicts}` 标明中断原因（`contour` / `thickness`）。
+目标原格越界或面别非法返回 `ok:false`，错误码 `bad_target`；网格非法为 `bad_grid`；
+方案 JSON 非法为 `bad_plan`（HTTP 400）。该接口只读，不改变保存 / 导入格式。

@@ -32,6 +32,7 @@ function makeEl(id) {
       set lineWidth(v) {}, get lineWidth() { return 1; },
       set font(v) {}, get font() { return ''; },
       set textAlign(v) {}, set textBaseline(v) {},
+      measureText: () => ({ width: 40 }),
       setLineDash() {}
     }),
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 })
@@ -54,6 +55,7 @@ const ids = ['rowsInput', 'colsInput', 'createGridBtn', 'axisSelect', 'lineSelec
   'imposeStart', 'imposeCount', 'imposePreviewBtn', 'imposeStatus', 'imposePreview',
   'imposeSummary', 'imposeOverwrite', 'imposeRows', 'imposeCancelBtn', 'imposeConfirmBtn',
   'pathCell', 'pathFace', 'pathSearchBtn', 'pathStatus', 'pathResults',
+  'trackCell', 'trackFace', 'trackStatus', 'trackTimeline',
   'duplexCard', 'duplexFlip', 'duplexOpenBtn', 'duplexStatus',
   'duplexOverlay', 'duplexFlipOverlay', 'duplexScreenNote', 'duplexPrintBtn',
   'duplexCloseBtn', 'plateFrontMeta', 'plateBackMeta', 'plateFrontSheet',
@@ -347,5 +349,80 @@ ui.plan.steps.push({ axis: 'v', line: 2, dir: 'l' });
 ui.renderPathfind();
 assert.equal(els.pathSearchBtn.disabled, true);
 assert.ok(/非法/.test(els.pathStatus.textContent));
+
+// ---------- 面片轨迹 ----------
+// 干净 2×2 折帖（v1 右折 + h1 下折），追踪原格 0,0 的正面
+els.rowsInput.value = '2'; els.colsInput.value = '2';
+els.createGridBtn.dispatch('click');
+ui.requestStep({ axis: 'v', line: 1, dir: 'r' });
+ui.requestStep({ axis: 'h', line: 1, dir: 'd' });
+els.trackCell.value = '0,0';
+els.trackFace.value = 'front';
+ui.renderTrack('0,0', 'front');
+assert.ok(ui.track.result && ui.track.result.ok, '轨迹应计算成功');
+assert.equal(ui.track.result.completed, true);
+assert.equal(ui.track.result.interrupted, null);
+assert.equal(ui.track.result.points.length, 3);
+assert.deepEqual(ui.track.result.points.map((p) => p.cell), ['0,0', '1,0', '1,1']);
+assert.deepEqual(ui.track.result.points.map((p) => [p.layer, p.depth]), [[1, 1], [1, 2], [2, 4]]);
+assert.deepEqual(ui.track.result.points.map((p) => p.faceUp), [true, false, true]);
+assert.deepEqual(ui.track.result.points.map((p) => p.upright), [true, true, false]);
+assert.equal(els.trackTimeline.hidden, false);
+assert.ok(/中断/.test(els.trackStatus.textContent) === false);
+
+// 点击第 1 步节点：联动既有回放定位，画布上按原始身份高亮该片
+ui.jumpTrackPoint(1);
+assert.equal(ui.upto, 1);
+const info1 = ui.currentTrackInfo(ui.replay.state);
+assert.equal(info1.id, '0,0');
+assert.equal(info1.cell, '1,0');
+assert.equal(info1.layer, 1);
+assert.equal(info1.depth, 2);
+// 末步节点：该片已合并入终叠第二层
+ui.jumpTrackPoint(2);
+const info2 = ui.currentTrackInfo(ui.replay.state);
+assert.equal(info2.cell, '1,1');
+assert.equal(info2.layer, 2);
+assert.equal(info2.depth, 4);
+assert.deepEqual(Object.keys(ui.replay.state.stacks), ['1,1']);
+
+// 切到反面追踪：第 1 步反面朝上
+ui.renderTrack('0,0', 'back');
+assert.equal(ui.track.target.face, 'back');
+assert.deepEqual(ui.track.result.points.map((p) => p.faceUp), [false, true, false]);
+
+// 网格、标注或步骤变化后自动重算（标注变化页码随之更新）
+ui.plan.labels = { '0,0': { front: '4', back: '1' } };
+ui.renderTrack();
+assert.equal(ui.track.result.target.face, 'back');
+assert.equal(ui.track.result.points[0].label, '1');   // 标签随面片身份携带
+assert.equal(ui.track.result.points[1].label, '1');
+
+// 首个非法步骤：保留此前节点并标明中断原因
+els.rowsInput.value = '1'; els.colsInput.value = '3';
+els.createGridBtn.dispatch('click');
+ui.plan.steps.push({ axis: 'v', line: 1, dir: 'r' });   // 合法：0 列叠入 1 列（2 层）
+ui.plan.steps.push({ axis: 'v', line: 2, dir: 'l' });   // 1 层压向 2 层：厚度冲突
+ui.renderTrack('0,0', 'front');
+assert.equal(ui.track.result.completed, false);
+assert.deepEqual(ui.track.result.points.map((p) => p.step), [0, 1]);
+assert.equal(ui.track.result.interrupted.stepIndex, 1);
+assert.equal(ui.track.result.interrupted.code, 'thickness');
+assert.deepEqual(ui.track.result.interrupted.conflicts, ['2,0', '1,0']);
+assert.ok(/中断/.test(els.trackStatus.textContent));
+// 回放在非法步时：节点定位到中断前最后一步，画布里身份仍可追踪
+ui.setUpto(2, true);
+assert.ok(ui.replay.error, '回放在非法步应带错误');
+const stalledInfo = ui.currentTrackInfo(ui.replay.state);
+assert.equal(stalledInfo.cell, '1,0');
+assert.equal(stalledInfo.depth, 2);
+ui.jumpTrackPoint(0);
+assert.equal(ui.upto, 0);
+assert.equal(ui.currentTrackInfo(ui.replay.state).cell, '0,0');
+
+// 目标非法（网格切换后旧选择失效由下拉重建兜底；直接构造越界）
+const badTarget = FE.trackPanel(1, 3, {}, [], { cell: '9,9', face: 'front' });
+assert.equal(badTarget.ok, false);
+assert.equal(badTarget.code, 'bad_target');
 
 console.log('前端冒烟流程全部通过');

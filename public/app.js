@@ -18,6 +18,7 @@ const app = {
   playTimer: null,
   imposition: { eligible: null, result: null, sig: null },  // 自动拼版状态
   pathfind: { result: null, sig: null, gridKey: null },      // 折手自动寻路状态
+  track: { result: null, gridKey: null, target: null },  // 面片轨迹
   duplex: { eligible: null, open: false, flip: 'long', result: null, sig: null }  // 双面印刷版
 };
 
@@ -62,6 +63,9 @@ function init() {
   $('imposeCount').addEventListener('input', renderImposition);
 
   $('pathSearchBtn').addEventListener('click', runPathfind);
+
+  $('trackCell').addEventListener('change', (e) => renderTrack(e.target.value, $('trackFace').value));
+  $('trackFace').addEventListener('change', (e) => renderTrack($('trackCell').value, e.target.value));
 
   $('duplexOpenBtn').addEventListener('click', openDuplex);
   $('duplexCloseBtn').addEventListener('click', closeDuplex);
@@ -212,6 +216,7 @@ function render() {
   renderControls();
   renderImposition();
   renderPathfind();
+  renderTrack();
   renderDuplex();
 }
 
@@ -357,13 +362,36 @@ function draw() {
   const movingCells = app.hoverHandle ? previewMoving(app.hoverHandle) : new Set();
 
   if (state) {
+    const track = currentTrackInfo(state);
     for (const [cellKey, ids] of Object.entries(state.stacks)) {
       const [cx, cy] = cellKey.split(',').map(Number);
-      drawStack(cx, cy, ids, state, conflicts.has(cellKey), movingCells.has(cellKey));
+      drawStack(cx, cy, ids, state, conflicts.has(cellKey), movingCells.has(cellKey),
+        track && track.cell === cellKey ? track : null);
     }
   }
 
   drawFoldHandles();
+}
+
+/**
+ * 当前回放状态中被追踪面片的定位信息：
+ * 以原始纸格 id 为身份，在任意回放前缀（含非法步截断态）中都可找到。
+ */
+function currentTrackInfo(state) {
+  if (!state || !app.track.target) return null;
+  const id = app.track.target.cell;
+  const p = state.panels[id];
+  if (!p) return null;
+  const cell = p.cx + ',' + p.cy;
+  const ids = state.stacks[cell];
+  if (!ids) return null;
+  return {
+    id, cell,
+    layer: ids.indexOf(id) + 1,   // 1 = 最上层
+    depth: ids.length,
+    face: app.track.target.face,
+    panel: p
+  };
 }
 
 function sizeCanvas(w, h) {
@@ -381,9 +409,10 @@ function line(x1, y1, x2, y2) {
   ctx.stroke();
 }
 
-function drawStack(cx, cy, ids, state, conflict, moving) {
+function drawStack(cx, cy, ids, state, conflict, moving, track) {
   const { x, y } = originXY(cx, cy);
   const depth = ids.length;
+  const trackLayer = track ? track.layer : 0;   // 1 = 最上层
 
   // 叠层阴影面片
   for (let i = depth - 1; i >= 1; i--) {
@@ -393,16 +422,29 @@ function drawStack(cx, cy, ids, state, conflict, moving) {
     ctx.strokeStyle = '#d8c795';
     ctx.stroke();
   }
+  // 被追踪面片若非顶层：在其偏移阴影位补一圈橙色描边（夹在叠层中可见）
+  if (track && trackLayer > 1) {
+    const ti = trackLayer - 1;
+    roundRect(x + ti * 2.5, y - ti * 2.5, CELL - 8, CELL - 8, 6);
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = '#e8820c';
+    ctx.stroke();
+  }
 
   // 顶面片
   const top = state.panels[ids[0]];
   const { side, upright } = E.visibleFace(top);
   const label = top[side];
+  const isTrackTop = track && trackLayer === 1;
   roundRect(x, y, CELL - 8, CELL - 8, 6);
-  ctx.fillStyle = conflict ? '#fde0dd' : moving ? '#dbeafe' : '#fdfaf1';
+  ctx.fillStyle = conflict ? '#fde0dd'
+    : isTrackTop ? '#fff1de'
+    : moving ? '#dbeafe' : '#fdfaf1';
   ctx.fill();
-  ctx.lineWidth = conflict ? 2.5 : moving ? 2 : 1.2;
-  ctx.strokeStyle = conflict ? '#d64545' : moving ? '#2f6fed' : '#b99e5e';
+  ctx.lineWidth = conflict ? 2.5 : isTrackTop ? 2.5 : moving ? 2 : 1.2;
+  ctx.strokeStyle = conflict ? '#d64545'
+    : isTrackTop ? '#e8820c'
+    : moving ? '#2f6fed' : '#b99e5e';
   ctx.stroke();
 
   // 页码（朝向：倒置旋转 180°）
@@ -434,6 +476,21 @@ function drawStack(cx, cy, ids, state, conflict, moving) {
     ctx.font = 'bold 11px system-ui, sans-serif';
     ctx.textAlign = 'right';
     ctx.fillText('⟲倒', x + CELL - 12, y + CELL - 13);
+  }
+
+  // 追踪面片徽标：显示其在叠中的层序（夹在层中时也可辨识）
+  if (track) {
+    const tag = `轨 ${track.layer}/${track.depth}`;
+    ctx.font = 'bold 10px system-ui, sans-serif';
+    const tw = ctx.measureText(tag).width + 10;
+    roundRect(x + 4, y + CELL - 20, tw, 15, 8);
+    ctx.fillStyle = '#e8820c';
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(tag, x + 4 + tw / 2, y + CELL - 12.5);
+    ctx.textBaseline = 'alphabetic';
   }
 
   app.hitCells.push({ x, y, w: CELL - 8, h: CELL - 8, cell: `${cx},${cy}` });
@@ -971,6 +1028,164 @@ function appendPathSolution(sol) {
   $('saveMsg').textContent = '已把自动寻路方案追加到当前步骤，可继续编辑或保存。';
 }
 
+// ---------- 面片轨迹 ----------
+/** 重建“原始纸格”下拉（仅网格尺寸变化时重建，尽量保留选择）。 */
+function refreshTrackCells() {
+  const key = `${app.plan.rows}x${app.plan.cols}`;
+  if (app.track.gridKey === key) return;
+  app.track.gridKey = key;
+  const sel = $('trackCell');
+  const prev = sel.value;
+  sel.innerHTML = '';
+  if (!app.plan.rows) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = '（先创建网格）';
+    sel.appendChild(o);
+    return;
+  }
+  for (let y = 0; y < app.plan.rows; y++) {
+    for (let x = 0; x < app.plan.cols; x++) {
+      const id = `${x},${y}`;
+      const lab = app.plan.labels[id] || {};
+      const f = lab.front || '', b = lab.back || '';
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = `原格(${id})` + (f || b ? `  正:${f || '空'} / 反:${b || '空'}` : '');
+      sel.appendChild(o);
+    }
+  }
+  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+}
+
+/**
+ * 渲染面片轨迹卡片。
+ * 网格、标注或步骤变化后由 render() 自动调用，重新计算时间线。
+ * @param forceCell/forceFace 下拉 change 时显式指定选择
+ */
+function renderTrack(forceCell, forceFace) {
+  refreshTrackCells();
+  const status = $('trackStatus');
+  const box = $('trackTimeline');
+  if (!app.plan.rows) {
+    app.track.result = null;
+    app.track.target = null;
+    status.className = 'hint';
+    status.textContent = '先在左侧创建行列纸格。';
+    box.hidden = true;
+    box.innerHTML = '';
+    draw();
+    return;
+  }
+  const cell = forceCell != null ? forceCell : $('trackCell').value;
+  const face = forceFace != null ? forceFace : $('trackFace').value;
+  if (forceCell != null) $('trackCell').value = cell;
+  if (forceFace != null) $('trackFace').value = face;
+  if (!cell) {
+    app.track.result = null;
+    app.track.target = null;
+    status.className = 'hint';
+    status.textContent = '请选择一个原始纸格与其正/反面。';
+    box.hidden = true;
+    draw();
+    return;
+  }
+
+  const result = E.trackPanel(
+    app.plan.rows, app.plan.cols, app.plan.labels, app.plan.steps,
+    { cell, face: face === 'back' ? 'back' : 'front' });
+  if (!result.ok) {
+    app.track.result = null;
+    app.track.target = null;
+    status.className = 'hint track-status-err';
+    status.textContent = result.message;
+    box.hidden = true;
+    draw();
+    return;
+  }
+
+  app.track.result = result;
+  app.track.target = { cell, face: result.target.face };
+
+  status.className = 'hint' + (result.interrupted ? ' track-status-err' : ' track-status-ok');
+  const faceName = result.target.face === 'front' ? '正面' : '反面';
+  status.innerHTML = result.interrupted
+    ? `追踪原格(${cell}) 的${faceName}：第 ${result.interrupted.stepIndex + 1} 步非法` +
+      `（${result.interrupted.code === 'thickness' ? '厚度不一致' : '折线不在外轮廓'}），` +
+      `时间线在第 ${result.points.length - 1} 步后中断。`
+    : `追踪原格(${cell}) 的${faceName}：共 ${result.points.length - 1} 步，` +
+      `当前末态位于格(${result.points[result.points.length - 1].cell})。`;
+
+  renderTrackTimeline(result);
+  draw();
+}
+
+function renderTrackTimeline(result) {
+  const box = $('trackTimeline');
+  box.innerHTML = '';
+  box.hidden = false;
+  const lastValidStep = result.points[result.points.length - 1].step;
+  const currentStep = app.upto <= lastValidStep ? app.upto : lastValidStep;
+  const stalled = app.upto > lastValidStep;   // 回放停在中断步（非法）上
+
+  result.points.forEach((p, i) => {
+    const node = document.createElement('button');
+    node.type = 'button';
+    node.className = 'track-node'
+      + (p.step === currentStep ? ' current' : '')
+      + (stalled && p.step === lastValidStep ? ' stalled' : '')
+      + (p.step > currentStep ? ' future' : '');
+    const up = p.faceUp ? '朝上' : '朝下';
+    const upright = p.upright
+      ? '正立'
+      : '<span class="track-inv">倒置</span>';
+    const labelTxt = p.label == null ? '空白' : escapeHtml(p.label);
+    node.innerHTML =
+      `<span class="track-step">第 ${p.step} 步</span>` +
+      `<span class="track-cell">格(${p.cell})</span>` +
+      `<span class="track-meta">层 <b>${p.layer}/${p.depth}</b></span>` +
+      `<span class="track-meta ${p.faceUp ? 'track-up' : 'track-down'}">` +
+        `${result.target.face === 'front' ? '正' : '反'}${up}</span>` +
+      `<span class="track-meta">${upright}</span>` +
+      `<span class="track-label">${labelTxt}</span>`;
+    node.title = `定位到第 ${p.step} 步回放，并高亮原格(${result.target.cell})`;
+    node.addEventListener('click', () => jumpTrackPoint(p.step));
+    box.appendChild(node);
+
+    if (i < result.points.length - 1) {
+      const arrow = document.createElement('span');
+      arrow.className = 'track-arrow';
+      arrow.textContent = '→';
+      box.appendChild(arrow);
+    }
+  });
+
+  if (result.interrupted) {
+    const it = result.interrupted;
+    const arrow = document.createElement('span');
+    arrow.className = 'track-arrow';
+    arrow.textContent = '→';
+    box.appendChild(arrow);
+    const stop = document.createElement('button');
+    stop.type = 'button';
+    stop.className = 'track-node break' + (stalled ? ' current' : ' future');
+    stop.innerHTML =
+      `<span class="track-step">第 ${it.stepIndex + 1} 步</span>` +
+      `<span class="track-stop">⛔ 中断</span>` +
+      `<span class="track-reason">${it.code === 'thickness' ? '厚度不一致' : '折线不在外轮廓'}</span>` +
+      (it.conflicts.length ? `<span class="track-reason">冲突 ${it.conflicts.slice(0, 4).map(escapeHtml).join('、')}${
+        it.conflicts.length > 4 ? '…' : ''}</span>` : '');
+    stop.title = escapeHtml(it.message) + '\n点击定位到中断前的最后一步。';
+    stop.addEventListener('click', () => jumpTrackPoint(lastValidStep));
+    box.appendChild(stop);
+  }
+}
+
+/** 点击时间线节点：联动既有回放定位到该步（节点面板由 draw 按目标身份高亮）。 */
+function jumpTrackPoint(step) {
+  setUpto(step, true);
+}
+
 // ---------- 双面印刷版预览 ----------
 /** 渲染右侧卡片：可用性、禁用原因。 */
 function renderDuplex() {
@@ -1237,6 +1452,7 @@ if (typeof window !== 'undefined') {
     requestStep, setUpto, createGrid, render, getFoldError: () => $('foldError'),
     previewImposition, confirmImposition, closeImposition, renderImposition,
     readImposeInputs, runPathfind, doPathfindSearch, appendPathSolution, renderPathfind,
+    renderTrack, refreshTrackCells, jumpTrackPoint, currentTrackInfo,
     openDuplex, closeDuplex, renderDuplex, renderDuplexPreview
   });
 }

@@ -294,3 +294,61 @@ test('POST /api/find-path：返回方案追加后经 /api/simulate 回放为目�
   assert.equal(sim.json.occupied[0].panels[0].ox, 0);
   assert.ok(sim.json.occupied[0].panels[0].frame.n.z < 0);
 });
+
+// ---------- 面片轨迹 ----------
+test('POST /api/trajectory：合法折帖返回逐步格位/层序/朝向时间线', async () => {
+  const r = await post('/api/trajectory', {
+    rows: 2, cols: 2, labels: {}, steps: STEPS,
+    target: { cell: '0,0', face: 'front' }
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.completed, true);
+  assert.equal(r.json.interrupted, null);
+  assert.equal(r.json.points.length, 3);
+  assert.deepEqual(r.json.points.map((p) => p.step), [0, 1, 2]);
+  assert.deepEqual(r.json.points.map((p) => p.cell), ['0,0', '1,0', '1,1']);
+  assert.deepEqual(r.json.points.map((p) => p.layer), [1, 1, 2]);
+  assert.deepEqual(r.json.points.map((p) => p.depth), [1, 2, 4]);
+  assert.deepEqual(r.json.points.map((p) => p.faceUp), [true, false, true]);
+  assert.deepEqual(r.json.points.map((p) => p.upright), [true, true, false]);
+});
+
+test('POST /api/trajectory：首个非法步截断时间线并给出中断原因', async () => {
+  const r = await post('/api/trajectory', {
+    rows: 1, cols: 3, labels: {},
+    steps: [
+      { axis: 'v', line: 1, dir: 'r' },
+      { axis: 'v', line: 2, dir: 'l' }
+    ],
+    target: { cell: '0,0', face: 'front' }
+  });
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.completed, false);
+  assert.deepEqual(r.json.points.map((p) => p.step), [0, 1]);
+  assert.equal(r.json.interrupted.stepIndex, 1);
+  assert.equal(r.json.interrupted.code, 'thickness');
+  assert.deepEqual(r.json.interrupted.conflicts, ['2,0', '1,0']);
+});
+
+test('POST /api/trajectory：目标非法返回 ok:false；方案非法返回 400', async () => {
+  const r = await post('/api/trajectory', {
+    rows: 2, cols: 2, labels: {}, steps: STEPS,
+    target: { cell: '9,9', face: 'front' }
+  });
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.error.code, 'bad_target');
+
+  const badFace = await post('/api/trajectory', {
+    rows: 2, cols: 2, labels: {}, steps: STEPS,
+    target: { cell: '0,0', face: 'side' }
+  });
+  assert.equal(badFace.json.error.code, 'bad_target');
+
+  const badPlan = await post('/api/trajectory', {
+    rows: 2, cols: 2, steps: [{ axis: 'z' }],
+    target: { cell: '0,0', face: 'front' }
+  });
+  assert.equal(badPlan.status, 400);
+  assert.equal(badPlan.json.error.code, 'bad_plan');
+});
