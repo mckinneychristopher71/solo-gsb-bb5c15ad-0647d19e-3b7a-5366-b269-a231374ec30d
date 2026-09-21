@@ -18,7 +18,8 @@ const app = {
   playTimer: null,
   imposition: { eligible: null, result: null, sig: null },  // 自动拼版状态
   pathfind: { result: null, sig: null, gridKey: null },      // 折手自动寻路状态
-  duplex: { eligible: null, open: false, flip: 'long', result: null, sig: null }  // 双面印刷版
+  duplex: { eligible: null, open: false, flip: 'long', result: null, sig: null },  // 双面印刷版
+  trajectory: { result: null, gridKey: null }                // 面片轨迹（选择存在 DOM 下拉中）
 };
 
 const $ = (id) => document.getElementById(id);
@@ -62,6 +63,9 @@ function init() {
   $('imposeCount').addEventListener('input', renderImposition);
 
   $('pathSearchBtn').addEventListener('click', runPathfind);
+
+  $('trajCell').addEventListener('change', onTrajTargetChange);
+  $('trajFace').addEventListener('change', onTrajTargetChange);
 
   $('duplexOpenBtn').addEventListener('click', openDuplex);
   $('duplexCloseBtn').addEventListener('click', closeDuplex);
@@ -206,6 +210,7 @@ function stopPlay() {
 // ---------- 渲染 ----------
 function render() {
   rerunReplay();
+  renderTrajectory();
   draw();
   renderSteps();
   renderSequence();
@@ -361,6 +366,7 @@ function draw() {
       const [cx, cy] = cellKey.split(',').map(Number);
       drawStack(cx, cy, ids, state, conflicts.has(cellKey), movingCells.has(cellKey));
     }
+    drawTrajHighlight();
   }
 
   drawFoldHandles();
@@ -971,6 +977,156 @@ function appendPathSolution(sol) {
   $('saveMsg').textContent = '已把自动寻路方案追加到当前步骤，可继续编辑或保存。';
 }
 
+// ---------- 面片轨迹 ----------
+/**
+ * 轨迹基于“方案全部步骤”逐步重放（与回放到第几步无关）；
+ * 网格、标注或步骤变化都会触发 render → 自动重算。
+ * 目标选择保存在 DOM 下拉中，不写入方案 JSON（保存/导入格式不变）。
+ */
+
+/** 重建“原始纸格”下拉（仅在网格尺寸变化时重建，保留用户选择）。 */
+function refreshTrajCells() {
+  const key = `${app.plan.rows}x${app.plan.cols}`;
+  if (app.trajectory.gridKey === key) return;
+  app.trajectory.gridKey = key;
+  const sel = $('trajCell');
+  const prev = sel.value;
+  sel.innerHTML = '';
+  if (!app.plan.rows) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = '（先创建网格）';
+    sel.appendChild(o);
+    return;
+  }
+  for (let y = 0; y < app.plan.rows; y++) {
+    for (let x = 0; x < app.plan.cols; x++) {
+      const id = `${x},${y}`;
+      const lab = app.plan.labels[id] || {};
+      const f = lab.front || '', b = lab.back || '';
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = `原格(${id})` + (f || b ? `  正:${f || '空'} / 反:${b || '空'}` : '');
+      sel.appendChild(o);
+    }
+  }
+  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+}
+
+/** 切换追踪目标：重算时间线并刷新画布高亮。 */
+function onTrajTargetChange() {
+  renderTrajectory();
+  draw();
+}
+
+/** 当前回放位置对应的轨迹节点（非法步之后回放停在末个有效节点）。 */
+function trajNodeAt(upto) {
+  const t = app.trajectory.result;
+  if (!t || !t.nodes || !t.nodes.length) return null;
+  return t.nodes[Math.min(upto, t.nodes.length - 1)];
+}
+
+/** 重算并渲染轨迹时间线；结果存入 app.trajectory.result 供画布高亮使用。 */
+function renderTrajectory() {
+  refreshTrajCells();
+  const status = $('trajStatus');
+  const tl = $('trajTimeline');
+  const errBox = $('trajError');
+  errBox.hidden = true;
+  errBox.textContent = '';
+  if (!app.plan.rows) {
+    app.trajectory.result = null;
+    status.className = 'hint';
+    status.textContent = '先在左侧创建行列纸格。';
+    tl.innerHTML = '';
+    return;
+  }
+  const cell = $('trajCell').value;
+  const face = $('trajFace').value === 'back' ? 'back' : 'front';
+  const result = E.panelTrajectory(
+    app.plan.rows, app.plan.cols, app.plan.labels, app.plan.steps, cell, face);
+  if (!result.ok) {
+    app.trajectory.result = null;
+    status.className = 'hint traj-status-err';
+    status.textContent = result.message;
+    tl.innerHTML = '';
+    return;
+  }
+  app.trajectory.result = result;
+
+  const faceName = face === 'front' ? '正面' : '反面';
+  status.className = 'hint';
+  status.textContent = `追踪 原格(${result.cell}) · ${faceName}` +
+    (result.label != null ? ` · 页码 ${result.label}` : ' · 空白面') +
+    `：第 0 步 → 第 ${result.nodes.length - 1} 步，点击节点跳转回放。`;
+
+  tl.innerHTML = '';
+  for (const node of result.nodes) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'traj-node'
+      + (node.step === app.upto ? ' current' : '')
+      + (node.moved ? ' moved' : '');
+    el.title = `第 ${node.step} 步：格(${node.cell}) 第 ${node.layer + 1}/${node.depth} 层，` +
+      `朝上面：${node.upFace === 'front' ? '正面' : '反面'}，` +
+      `${node.upright ? '正立' : '倒置 180°'}`;
+    el.innerHTML =
+      `<b>第 ${node.step} 步</b>` +
+      `<span>格(${node.cell}) · 第 ${node.layer + 1}/${node.depth} 层</span>` +
+      `<span class="${node.faceUp ? 'up' : 'down'}">${node.faceUp ? '该面朝上' : '该面朝下'}</span>` +
+      `<span class="${node.upright ? '' : 'inv'}">${node.upright ? '正立' : '⟲ 倒置'}</span>`;
+    el.addEventListener('click', () => setUpto(node.step));
+    tl.appendChild(el);
+  }
+
+  if (result.error) {
+    // 首个非法步骤：保留此前节点，在时间线末尾标出中断
+    const stop = document.createElement('div');
+    stop.className = 'traj-node traj-stop';
+    stop.textContent = `第 ${result.error.stepIndex + 1} 步 ✕ 中断`;
+    tl.appendChild(stop);
+    errBox.hidden = false;
+    errBox.textContent =
+      `⚠ 轨迹在第 ${result.error.stepIndex + 1} 步中断：` +
+      (result.error.code === 'thickness' ? '两侧厚度不一致。' : '折线不在当前外轮廓。') +
+      '\n' + result.error.message +
+      (result.error.conflicts && result.error.conflicts.length
+        ? `\n冲突纸格：${[...new Set(result.error.conflicts)].join('、')}` : '') +
+      '\n已保留此前全部节点；修正该步后轨迹自动延伸。';
+  }
+}
+
+/** 在画布上高亮被追踪面片当前所在的叠层格位。 */
+function drawTrajHighlight() {
+  const t = app.trajectory.result;
+  if (!t) return;
+  const node = trajNodeAt(app.upto);
+  if (!node) return;
+  const [cx, cy] = node.cell.split(',').map(Number);
+  const { x, y } = originXY(cx, cy);
+  ctx.save();
+  // 橙色虚线外框：标出该面片所在叠层
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#e8730c';
+  ctx.setLineDash([6, 3]);
+  roundRect(x - 5, y - 5, CELL - 8 + 10, CELL - 8 + 10, 9);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // 层序徽标（面片可能埋在叠层内部，标明第几层）
+  const tag = `轨迹${t.face === 'front' ? '正' : '反'} · 第${node.layer + 1}/${node.depth}层`;
+  const w = tag.length * 11 + 12;
+  const ty = Math.max(12, y - 10);
+  roundRect(x - 2, ty - 13, w, 17, 8);
+  ctx.fillStyle = '#e8730c';
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(tag, x + 4, ty - 4);
+  ctx.restore();
+}
+
 // ---------- 双面印刷版预览 ----------
 /** 渲染右侧卡片：可用性、禁用原因。 */
 function renderDuplex() {
@@ -1237,6 +1393,7 @@ if (typeof window !== 'undefined') {
     requestStep, setUpto, createGrid, render, getFoldError: () => $('foldError'),
     previewImposition, confirmImposition, closeImposition, renderImposition,
     readImposeInputs, runPathfind, doPathfindSearch, appendPathSolution, renderPathfind,
-    openDuplex, closeDuplex, renderDuplex, renderDuplexPreview
+    openDuplex, closeDuplex, renderDuplex, renderDuplexPreview,
+    renderTrajectory, onTrajTargetChange
   });
 }

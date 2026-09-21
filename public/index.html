@@ -120,6 +120,26 @@
         <div id="foldState" class="hint"></div>
       </section>
 
+      <section class="card" id="trajectoryCard">
+        <h2>面片轨迹</h2>
+        <p class="hint">选择某个<b>原始纸格</b>的正面或反面，生成第 0 步到末步的时间线，
+          逐步给出该面所在格位、叠层层序与朝向；点击节点联动回放并高亮该面片。</p>
+        <div class="row">
+          <label>原始纸格
+            <select id="trajCell"></select>
+          </label>
+          <label>面别
+            <select id="trajFace">
+              <option value="front">正面</option>
+              <option value="back">反面</option>
+            </select>
+          </label>
+        </div>
+        <div id="trajStatus" class="hint"></div>
+        <div id="trajTimeline" class="traj-timeline"></div>
+        <div id="trajError" class="error-box" hidden></div>
+      </section>
+
       <section class="card" id="duplexCard">
         <h2>双面印刷版预览</h2>
         <p class="hint">全部折叠合法并收成单叠后，按当前纸格标注并排生成<b>正面版 / 背面版</b>：

@@ -3,6 +3,7 @@
  * server.js —— 折页阅读顺序校样 Web 服务
  *  - 静态托管 public/（原生 HTML/CSS/Canvas 前端）
  *  - /api/simulate：服务端重放方案（与浏览器共用同一份 foldEngine.js）
+ *  - /api/panel-trajectory：原始面片跨折叠轨迹（格位/层序/朝向时间线）
  *  - /api/plans* ：方案 JSON 持久化到 DATA_DIR（容器卷）
  */
 const express = require('express');
@@ -143,6 +144,26 @@ app.post('/api/find-path', (req, res) => {
           stepIndex: result.stepIndex,
           conflicts: result.conflicts
         }
+      });
+    }
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ ok: false, error: { code: 'bad_plan', message: e.message } });
+  }
+});
+
+// ---------- 面片轨迹 ----------
+app.post('/api/panel-trajectory', (req, res) => {
+  try {
+    const plan = E.normalizePlan(req.body || {});
+    const target = (req.body && req.body.target && typeof req.body.target === 'object')
+      ? req.body.target : {};
+    const result = E.panelTrajectory(
+      plan.rows, plan.cols, plan.labels, plan.steps, target.cell, target.face);
+    if (!result.ok) {
+      return res.json({
+        ok: false,
+        error: { code: result.code, message: result.message }
       });
     }
     res.json(result);

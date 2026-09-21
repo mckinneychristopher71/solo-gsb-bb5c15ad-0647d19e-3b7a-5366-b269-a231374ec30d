@@ -99,7 +99,19 @@ docker compose down
        纸张 A4（或与纸格比例相近的横向纸）；
      - 应用已内置打印样式：**自动隐藏全部编辑控件，正面版、背面版各占一页**
        （A4 横版），无需在打印对话框中再做隐藏设置。
-9. **保存 / 载入**：
+9. **面片轨迹**：右侧“面片轨迹”卡片中选择某个**原始纸格**的**正面或反面**，
+   系统按第 0 步到末步生成时间线：
+   - 每个节点给出该面当前**所在格位**、叠层中的**层序**（第 k/N 层）、
+     该面**朝上/朝下**与页码**正立/倒置**状态；节点右上角标“· 翻动”表示
+     该步折叠移动了此面片；
+   - **点击时间线节点**即联动既有回放定位到对应步骤，画布上以橙色虚线框
+     高亮该面片所在叠层并标注其层序（面片埋在叠层内部时同样可定位）；
+   - 轨迹以原始面片身份跨折叠追踪，叠层合并、倒序压叠后层序仍准确；
+   - 方案中存在**首个非法步骤**时，时间线保留此前全部节点，末尾以红色
+     “✕ 中断”标记该步，并在下方给出中断原因与冲突纸格；
+   - 网格、标注或步骤任何变化都会**自动重算**时间线；轨迹选择不写入方案
+     JSON，保存与导入格式不变。
+10. **保存 / 载入**：
    - “保存到服务器”将方案 JSON 存入容器数据卷，可通过“已存方案…”再次载入；
    - “导出 JSON / 导入 JSON”在本地文件与应用之间交换方案。
 
@@ -142,17 +154,18 @@ docker compose down
 ## 目录结构
 
 ```
-server.js              Express 服务：静态托管 + /api/simulate + /api/impose + /api/duplex-plate + /api/find-path + 方案持久化
+server.js              Express 服务：静态托管 + /api/simulate + /api/impose + /api/duplex-plate + /api/find-path + /api/panel-trajectory + 方案持久化
 entrypoint.sh          容器启动入口（依赖自检/安装、初始化、启动）
 public/
   index.html           页面结构
   styles.css           样式（含双面版打印样式 @media print）
   foldEngine.js        折叠模拟引擎（浏览器与服务端共用）
-  app.js               Canvas 渲染、交互、回放、存取、双面印刷版预览
+  app.js               Canvas 渲染、交互、回放、存取、双面印刷版预览、面片轨迹时间线
 tests/engine.test.js   引擎单元测试（node --test）
 tests/imposition.test.js 自动拼版单元测试
 tests/duplex.test.js   双面印刷版（镜像、制版旋转、前置条件）单元测试
 tests/pathfind.test.js 折手自动寻路（BFS、状态键、无解/超限）单元测试
+tests/trajectory.test.js 面片轨迹（跨折叠追踪、层序、中断）与 /api/panel-trajectory 测试
 tests/api.test.js      /api/impose、/api/find-path、/api/simulate 与方案存取的 HTTP 测试
 tests/ui-smoke.js      前端主流程冒烟（DOM 桩中加载 app.js，直接 `node tests/ui-smoke.js` 运行）
 Dockerfile, docker-compose.yml
@@ -201,3 +214,20 @@ node tests/ui-smoke.js   # 前端主流程冒烟（DOM 桩，独立运行）
 网格超过 4×4、前缀含非法折叠等前置问题返回 `ok:false`，错误码
 `grid_too_large` / `bad_prefix` / `bad_target` / `bad_limit` / `bad_grid`。
 返回的 `steps` 可直接追加到方案 `steps` 后交由 `/api/simulate` 回放验证。
+
+`POST /api/panel-trajectory` 在方案 JSON 之外附加：
+
+```json
+{
+  "target": { "cell": "0,0", "face": "front" }
+}
+```
+
+以原始面片身份（原格 `cell` + 面别 `face`）跨折叠追踪，返回第 0 步到末步的
+时间线：`nodes` 逐节点给出 `step`、`cell`（当前格位）、`layer`/`depth`
+（叠层层序，0 = 最上层）、`upFace`（实际朝上的面别）、`faceUp`（追踪的面
+是否朝上）、`upright`（页码是否正立）与 `moved`（该步是否翻动了此面片）；
+`label` 为追踪面的页码（空白为 `null`）。遇到首个非法步骤时保留此前全部
+节点，`error` 给出 `stepIndex` / `code` / `message` / `conflicts` 中断原因，
+其后的步骤不再追踪；全部合法时 `error` 为 `null`。
+目标纸格越界或面别非法返回 `ok:false`，错误码 `bad_target` / `bad_grid`。

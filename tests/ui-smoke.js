@@ -16,9 +16,12 @@ function makeEl(id) {
     style: { cssText: '', setProperty() {} }, className: '', disabled: false,
     dataset: {}, files: [], max: '0',
     width: 0, height: 0,
+    children: [],
     addEventListener(t, fn) { (listeners[t] = listeners[t] || []).push(fn); },
     dispatch(t, ev = {}) { (listeners[t] || []).forEach((fn) => fn(ev)); },
-    appendChild() {}, append() {}, querySelector() { return makeEl('q'); },
+    appendChild(c) { el.children.push(c); return c; },
+    append(...cs) { el.children.push(...cs); },
+    querySelector() { return makeEl('q'); },
     querySelectorAll() { return []; },
     removeAttribute() {}, setAttribute() {},
     options: [],
@@ -36,11 +39,16 @@ function makeEl(id) {
     }),
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 })
   };
-  // 桩保真：设置 innerHTML 时同步一份去标签的 textContent（app 常用 innerHTML、断言看 textContent）
+  // 桩保真：设置 innerHTML 时同步一份去标签的 textContent（app 常用 innerHTML、断言看 textContent）；
+  // 清空 innerHTML 视同移除全部子节点（时间线等动态列表依赖此行为）
   let html = '';
   Object.defineProperty(el, 'innerHTML', {
     get() { return html; },
-    set(v) { html = String(v); el.textContent = html.replace(/<[^>]*>/g, ''); }
+    set(v) {
+      html = String(v);
+      el.textContent = html.replace(/<[^>]*>/g, '');
+      if (html === '') el.children = [];
+    }
   });
   return el;
 }
@@ -54,6 +62,7 @@ const ids = ['rowsInput', 'colsInput', 'createGridBtn', 'axisSelect', 'lineSelec
   'imposeStart', 'imposeCount', 'imposePreviewBtn', 'imposeStatus', 'imposePreview',
   'imposeSummary', 'imposeOverwrite', 'imposeRows', 'imposeCancelBtn', 'imposeConfirmBtn',
   'pathCell', 'pathFace', 'pathSearchBtn', 'pathStatus', 'pathResults',
+  'trajCell', 'trajFace', 'trajStatus', 'trajTimeline', 'trajError',
   'duplexCard', 'duplexFlip', 'duplexOpenBtn', 'duplexStatus',
   'duplexOverlay', 'duplexFlipOverlay', 'duplexScreenNote', 'duplexPrintBtn',
   'duplexCloseBtn', 'plateFrontMeta', 'plateBackMeta', 'plateFrontSheet',
@@ -347,5 +356,64 @@ ui.plan.steps.push({ axis: 'v', line: 2, dir: 'l' });
 ui.renderPathfind();
 assert.equal(els.pathSearchBtn.disabled, true);
 assert.ok(/非法/.test(els.pathStatus.textContent));
+
+// ---------- 面片轨迹 ----------
+// 合法 2×2 折帖：追踪原格(0,0) 正面，时间线第 0→2 步
+els.rowsInput.value = '2'; els.colsInput.value = '2';
+els.createGridBtn.dispatch('click');
+ui.requestStep({ axis: 'v', line: 1, dir: 'r' });
+ui.requestStep({ axis: 'h', line: 1, dir: 'd' });
+els.trajCell.value = '0,0';
+els.trajFace.value = 'front';
+els.trajCell.dispatch('change');
+let traj = ui.trajectory.result;
+assert.ok(traj && traj.ok, '轨迹计算成功');
+assert.equal(traj.nodes.length, 3);
+assert.deepEqual(traj.nodes.map((n) => n.cell), ['0,0', '1,0', '1,1']);
+assert.deepEqual(traj.nodes.map((n) => n.layer), [0, 0, 1]);
+assert.deepEqual(traj.nodes.map((n) => n.depth), [1, 2, 4]);
+assert.deepEqual(traj.nodes.map((n) => n.faceUp), [true, false, true]);
+assert.deepEqual(traj.nodes.map((n) => n.upright), [true, true, false]);
+assert.ok(els.trajStatus.textContent.includes('追踪'));
+assert.equal(els.trajError.hidden, true);
+assert.equal(els.trajTimeline.children.length, 3, '时间线渲染 3 个节点');
+
+// 点击时间线节点 → 联动回放定位到对应步骤
+els.trajTimeline.children[1].dispatch('click');
+assert.equal(ui.upto, 1);
+assert.ok(els.trajTimeline.children[1].className.includes('current'), '当前步节点高亮');
+assert.ok(!els.trajTimeline.children[0].className.includes('current'));
+
+// 切换追踪面别：反面轨迹与正面相反，自动重算
+els.trajFace.value = 'back';
+els.trajFace.dispatch('change');
+traj = ui.trajectory.result;
+assert.deepEqual(traj.nodes.map((n) => n.faceUp), [false, true, false]);
+
+// 步骤变化后自动重算：截断到 1 步，时间线收缩为 2 个节点
+ui.plan.steps = ui.plan.steps.slice(0, 1);
+ui.render();
+traj = ui.trajectory.result;
+assert.equal(traj.nodes.length, 2);
+assert.equal(els.trajTimeline.children.length, 2);
+
+// 非法步骤：保留此前节点、时间线末尾标中断、错误框给出原因
+els.rowsInput.value = '1'; els.colsInput.value = '3';
+els.createGridBtn.dispatch('click');
+els.trajCell.value = '0,0';
+els.trajFace.value = 'front';
+ui.plan.steps.push({ axis: 'v', line: 1, dir: 'r' });
+ui.plan.steps.push({ axis: 'v', line: 2, dir: 'l' });   // 厚度冲突
+ui.render();
+traj = ui.trajectory.result;
+assert.equal(traj.nodes.length, 2, '保留第 0、1 步节点');
+assert.equal(traj.error.stepIndex, 1);
+assert.equal(traj.error.code, 'thickness');
+assert.equal(els.trajError.hidden, false);
+assert.ok(els.trajError.textContent.includes('中断'));
+assert.ok(els.trajError.textContent.includes('厚度'));
+const stopNode = els.trajTimeline.children[els.trajTimeline.children.length - 1];
+assert.ok(stopNode.className.includes('traj-stop'), '时间线末尾有中断标记');
+assert.equal(els.trajTimeline.children.length, 3, '2 个节点 + 1 个中断标记');
 
 console.log('前端冒烟流程全部通过');

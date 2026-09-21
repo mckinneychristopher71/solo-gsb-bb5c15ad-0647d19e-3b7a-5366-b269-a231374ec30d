@@ -778,6 +778,92 @@ function findFoldPath(rows, cols, labels, steps, target, options) {
   };
 }
 
+/**
+ * 面片轨迹
+ * --------
+ * 以原始面片身份（原格 cell + 面别 face）跨折叠追踪：
+ * 从第 0 步（初始状态）到方案末步逐步记录该面片——
+ *   - cell：当前所在格位；
+ *   - layer / depth：所在叠层中的层序（0 = 最上层）与叠层总厚；
+ *   - upFace / faceUp：实际朝上的面别、追踪的面是否朝上；
+ *   - upright：该面页码是否正立（印刷约定两面字形都随 frame.y）；
+ *   - moved：产生该节点的折叠是否移动了此面片（在移动纸瓣内）。
+ * 面片 id 在叠层合并、倒序、压叠后保持不变，轨迹因此跨折叠延续。
+ * 遇到首个非法步骤时停止：保留此前全部节点，并在 error 中标明
+ * 中断原因（stepIndex / code / message / conflicts），其后的步骤不再追踪。
+ *
+ * @returns 目标合法
+ *   { ok:true, cell, face, label:string|null,
+ *     nodes:[{ step, cell, layer, depth, upFace, faceUp, upright, moved }],
+ *     error:null | { stepIndex, code, message, conflicts } }
+ *   目标非法 { ok:false, code:'bad_grid'|'bad_target', message }
+ */
+function panelTrajectory(rows, cols, labels, steps, cell, face) {
+  rows = Number(rows); cols = Number(cols);
+  if (!Number.isInteger(rows) || rows < 1 || !Number.isInteger(cols) || cols < 1) {
+    return { ok: false, code: 'bad_grid', message: '尚未创建合法的行列纸格（行数、列数都须为正整数）。' };
+  }
+  const m = /^(\d+),(\d+)$/.exec(String(cell == null ? '' : cell));
+  if (!m) return { ok: false, code: 'bad_target', message: '请选择一个原始纸格作为追踪目标。' };
+  const tx = Number(m[1]), ty = Number(m[2]);
+  if (tx < 0 || tx >= cols || ty < 0 || ty >= rows) {
+    return { ok: false, code: 'bad_target', message: `追踪目标 (${cell}) 不在 ${cols}×${rows} 网格内。` };
+  }
+  if (face !== 'front' && face !== 'back') {
+    return { ok: false, code: 'bad_target', message: "面别须为 'front'（正面）或 'back'（反面）。" };
+  }
+
+  const id = key(tx, ty);
+  const lab = (labels && labels[id]) || {};
+  const rawLabel = lab[face] != null ? String(lab[face]) : '';
+  const stepList = Array.isArray(steps) ? steps : [];
+
+  let state = initialState(rows, cols, labels || {});
+  const nodes = [];
+  const snap = (st, stepNo, moved) => {
+    const p = st.panels[id];
+    const at = key(p.cx, p.cy);
+    const stack = st.stacks[at] || [];
+    const frontUp = p.frame.n.z > 0;
+    return {
+      step: stepNo,
+      cell: at,
+      layer: stack.indexOf(id),
+      depth: stack.length,
+      upFace: frontUp ? 'front' : 'back',
+      faceUp: (face === 'front') === frontUp,
+      upright: p.frame.y.y > 0,
+      moved: !!moved
+    };
+  };
+  nodes.push(snap(state, 0, false));
+
+  for (let i = 0; i < stepList.length; i++) {
+    const err = validateFold(state, stepList[i]);
+    if (err) {
+      return {
+        ok: true, cell: id, face,
+        label: rawLabel === '' ? null : rawLabel,
+        nodes,
+        error: { stepIndex: i, ...err }
+      };
+    }
+    const before = state.panels[id];
+    const prevAt = key(before.cx, before.cy);
+    const prevFrame = frameKey(before.frame);
+    state = applyFold(state, stepList[i]);
+    const after = state.panels[id];
+    const moved = key(after.cx, after.cy) !== prevAt || frameKey(after.frame) !== prevFrame;
+    nodes.push(snap(state, i + 1, moved));
+  }
+  return {
+    ok: true, cell: id, face,
+    label: rawLabel === '' ? null : rawLabel,
+    nodes,
+    error: null
+  };
+}
+
 /** 方案校验/规整（载入 JSON 时使用） */
 function normalizePlan(plan) {
   const errors = [];
@@ -828,7 +914,8 @@ const api = {
   replay, visibleFace, pageSequence, normalizePlan, key,
   impositionEligibility, autoImpose, impositionOverwrite,
   duplexEligibility, buildDuplexPlates,
-  findFoldPath, candidateSteps, stateKey, describeStep
+  findFoldPath, candidateSteps, stateKey, describeStep,
+  panelTrajectory
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
